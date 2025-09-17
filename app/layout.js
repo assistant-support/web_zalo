@@ -1,20 +1,19 @@
+// app/layout.js
 import "./globals.css";
-import { SessionProvider } from "next-auth/react";
-import SocketBridge from "@/components/realtime/SocketBridge";
+import Providers from './providers'; // 1. Import component Providers
 
 export const metadata = {
-  title: "My App",
-  description: "Next 15 + NextAuth v5 + Socket.IO",
+  title: "Web Zalo",
+  description: "Real-time application",
 };
 
 export default function RootLayout({ children }) {
   return (
     <html lang="vi">
       <body>
-        <SessionProvider>
-          <SocketBridge />
+        <Providers> {/* 2. Bọc children bằng Providers */}
           {children}
-        </SessionProvider>
+        </Providers>
       </body>
     </html>
   );

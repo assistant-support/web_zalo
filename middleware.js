@@ -1,7 +1,16 @@
-export { auth as middleware } from "@/auth";
+// middleware.js
+import { auth } from '@/auth';
+
+export default auth;
 
 export const config = {
-    matcher: [
-        '/((?!login|api/auth|_next/static|_next/image|favicon.ico|sitemap.xml|robots.txt|assets|images|fonts|.*\\.(?:png|jpg|jpeg|gif|webp|svg)$).*)',
-    ],
+    /**
+     * Match all request paths except for the ones starting with:
+     * - api/auth: NextAuth.js internal routes
+     * - api/realtime: Our custom API for socket tokens
+     * - _next/static: static files
+     * - _next/image: image optimization files
+     * - favicon.ico: favicon file
+     */
+    matcher: ['/((?!api/auth|api/realtime|_next/static|_next/image|favicon.ico).*)'],
 };
