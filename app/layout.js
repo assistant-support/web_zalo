@@ -1,19 +1,20 @@
-// app/layout.js
 import "./globals.css";
-import Providers from './providers'; // 1. Import component Providers
+import { Providers } from "./providers";
+import { Toaster } from 'sonner';
 
 export const metadata = {
-  title: "Web Zalo",
-  description: "Real-time application",
+  title: "Zalo App",
+  description: "Next.js 15 & Socket.IO",
 };
 
 export default function RootLayout({ children }) {
   return (
-    <html lang="vi">
-      <body>
-        <Providers> {/* 2. Bọc children bằng Providers */}
-          {children}
+    <html lang="en">
+      <body >
+        <Providers>
+          <main>{children}</main>
         </Providers>
+        <Toaster richColors position="top-right" />
       </body>
     </html>
   );

@@ -1,12 +1,12 @@
-// app/providers.js
 'use client';
-
 import { SessionProvider } from 'next-auth/react';
+import SocketBridge from '@/components/realtime/SocketBridge';
 
-export default function Providers({ children }) {
+export function Providers({ children }) {
     return (
         <SessionProvider>
             {children}
+            <SocketBridge />
         </SessionProvider>
     );
 }

@@ -1,156 +1,132 @@
 // auth.js
-import NextAuth from "next-auth";
-import Credentials from "next-auth/providers/credentials";
-import bcrypt from "bcryptjs";
+import NextAuth from 'next-auth';
+import CredentialsProvider from 'next-auth/providers/credentials';
+import { sign } from 'jsonwebtoken';
+import bcrypt from 'bcryptjs';
 
-// KHÔNG import Mongoose models hoặc dbConnect ở đây
+// KHÔNG import các module server ở cấp cao nhất
 
-const DEBUG_AUTH = process.env.DEBUG_AUTH === '1';
-const log = (...args) => DEBUG_AUTH && console.log('[AUTH]', ...args);
-
-/**
- * Xây dựng các thông tin (claims) về vai trò và quyền hạn cho user.
- * Hàm này CHỈ được gọi bên trong môi trường Node.js.
- * @param {object} userDoc - Dữ liệu người dùng từ MongoDB.
- * @returns {object} - Một object chứa roleId, roleName, isAdmin, và danh sách perms.
- */
-async function buildRoleClaims(userDoc) {
-    if (!userDoc?.role) {
-        return { roleId: null, roleName: null, isAdmin: false, perms: [] };
-    }
-
-    // Import động các model cần thiết
-    const { default: Role } = await import("@/models/role.model.js");
-    const { default: Permission } = await import("@/models/permission.model.js");
-
-    try {
-        const role = await Role.findById(userDoc.role)
-            .populate({
-                path: "permissions.permission",
-                model: Permission,
-                select: "action group description label tags"
-            })
-            .lean();
-
-        if (!role) {
-            return { roleId: null, roleName: null, isAdmin: false, perms: [] };
-        }
-
-        const roleName = role.name;
-        const isAdmin = roleName === "admin";
-        const perms = (role.permissions || [])
-            .map(p => {
-                if (!p.permission) return null;
-                return {
-                    action: p.permission.action || "",
-                    label: p.permission.label || p.permission.action || "",
-                    group: p.permission.group || "",
-                    tags: Array.isArray(p.permission.tags) ? p.permission.tags : [],
-                    conditions: p.conditions || {},
-                    allowedFields: Array.isArray(p.allowedFields) ? p.allowedFields : [],
-                };
-            })
-            .filter(Boolean);
-
-        return { roleId: String(role._id), roleName, isAdmin, perms };
-    } catch (error) {
-        console.error('[AUTH] Error building role claims:', error);
-        return { roleId: null, roleName: null, isAdmin: false, perms: [] };
-    }
-}
-
-export const { handlers, auth, signIn, signOut } = NextAuth({
-    secret: process.env.AUTH_SECRET,
-    session: { strategy: "jwt" },
-    trustHost: true,
-    pages: { signIn: "/login" },
-
+export const { handlers, signIn, signOut, auth } = NextAuth({
     providers: [
-        Credentials({
-            // ... (phần authorize giữ nguyên như cũ, nó cũng chỉ chạy ở môi trường Node.js)
-            async authorize({ email, password }) {
-                if (!email || !password) return null;
+        CredentialsProvider({
+            async authorize(credentials) {
+                // Dynamic import để đảm bảo không bị bundle vào middleware
+                const { connectToDB } = await import('@/lib/db');
+                const Account = (await import('@/models/account.model')).default;
+                const Permission = (await import('@/models/permission.model')).default;
+                await import('@/models/role.model');
 
-                // Import động DB và Model
-                const { dbConnect } = await import("@/lib/db.js");
-                const { default: User } = await import("@/models/account.model.js");
-                await dbConnect();
+                await connectToDB();
 
-                const user = await User.findOne({ email: email.toLowerCase() }).select("+password");
-                if (!user || user.status !== "active") return null;
+                const user = await Account.findOne({ email: credentials.email })
+                    .select('+password')
+                    .populate({
+                        path: 'role',
+                        populate: { path: 'permissions', model: Permission, select: 'name' }
+                    });
 
-                const isPasswordCorrect = await bcrypt.compare(password, user.password || "");
-                if (!isPasswordCorrect) return null;
-
-                return {
-                    id: String(user._id),
-                    name: user.name,
-                    email: user.email,
-                    image: user.avatar,
-                    username: user.username,
-                };
+                if (user && user.password) {
+                    const isPasswordCorrect = bcrypt.compareSync(credentials.password, user.password);
+                    if (isPasswordCorrect) {
+                        return {
+                            id: user._id.toString(),
+                            name: user.name,
+                            email: user.email,
+                            role: user.role,
+                        };
+                    }
+                }
+                return null;
             },
         }),
     ],
-
     callbacks: {
-        // Callback này an toàn cho Edge Runtime vì nó không truy cập DB.
-        authorized: ({ auth }) => !!auth?.user,
-
-        async signIn() {
-            return true;
-        },
-
-        // Callback này chỉ chạy trên server Node.js, KHÔNG chạy trong middleware.
+        /**
+         * Callback JWT là trái tim của việc quản lý session.
+         * Nó quyết định những thông tin nào được lưu trong token (cookie).
+         */
         async jwt({ token, user, trigger }) {
-            log(`JWT callback triggered. Reason: ${trigger}, User present: ${!!user}`);
+            // 1. Lần đầu đăng nhập: `user` object tồn tại.
+            if (user) {
+                console.log('[JWT Callback] Lần đầu đăng nhập, tạo token...');
+                token.uid = user.id;
+                token.name = user.name;
+                token.email = user.email;
+                token.roleId = user.role?._id.toString();
+                token.roleName = user.role?.name;
+                token.perms = user.role?.permissions.map(p => p.name) || [];
+                token.isAdmin = user.role?.name === 'admin';
 
-            // Chỉ truy cập DB khi đăng nhập hoặc có yêu cầu update.
-            if (user || trigger === "update") {
+                // Tạo token riêng cho Socket.IO
+                const realtimeTokenPayload = {
+                    uid: user.id,
+                    roleId: user.role?._id.toString(),
+                };
+                token.realtimeToken = sign(realtimeTokenPayload, process.env.AUTH_SECRET, { expiresIn: '1h' });
+
+                // Trả về token ngay sau khi đăng nhập
+                return token;
+            }
+
+            // 2. Cập nhật Session: Khi client gọi `updateSession()`, `trigger` sẽ là "update".
+            //    Đây là luồng chính để làm mới quyền hạn.
+            if (trigger === 'update') {
+                console.log('[JWT Callback] Nhận trigger "update", làm mới token từ DB...');
+
                 try {
-                    // Import động DB và Model ngay khi cần dùng
-                    const { dbConnect } = await import("@/lib/db.js");
-                    const { default: User } = await import("@/models/account.model.js");
-                    await dbConnect();
+                    // "LÀM GIÀU" TOKEN: Luôn luôn truy vấn lại DB để lấy thông tin mới nhất.
+                    // Đây là cách làm an toàn và đáng tin cậy nhất.
+                    const { connectToDB } = await import('@/lib/db');
+                    const Account = (await import('@/models/account.model')).default;
+                    const Permission = (await import('@/models/permission.model')).default;
+                    await import('@/models/role.model');
 
-                    const userDoc = await User.findById(token.uid || user.id).lean();
+                    await connectToDB();
 
-                    if (userDoc) {
-                        log('Updating JWT from userDoc', userDoc._id);
-                        token.uid = String(userDoc._id);
-                        token.username = userDoc.username ?? null;
-                        token.status = userDoc.status ?? "active";
-                        token.email = userDoc.email?.toLowerCase() ?? null;
+                    const freshUser = await Account.findById(token.uid).populate({
+                        path: 'role',
+                        populate: { path: 'permissions', model: Permission, select: 'name' }
+                    }).lean(); // .lean() để lấy object thuần túy
 
-                        const claims = await buildRoleClaims(userDoc);
-                        token.roleId = claims.roleId;
-                        token.roleName = claims.roleName;
-                        token.isAdmin = claims.isAdmin;
-                        token.perms = claims.perms;
+                    if (freshUser) {
+                        console.log('[JWT Callback] Tìm thấy dữ liệu mới cho user:', freshUser.email);
+                        // Cập nhật lại toàn bộ thông tin trong token từ dữ liệu mới nhất
+                        token.roleId = freshUser.role?._id.toString();
+                        token.roleName = freshUser.role?.name;
+                        token.perms = freshUser.role?.permissions.map(p => p.name) || [];
+                        token.isAdmin = freshUser.role?.name === 'admin';
                     } else {
-                        log('User not found in DB during JWT update. Invalidating token.');
-                        return { ...token, status: 'inactive', perms: [], roleId: null, roleName: null, isAdmin: false };
+                        console.warn('[JWT Callback] Không tìm thấy user khi làm mới token.');
                     }
                 } catch (error) {
-                    console.error('[AUTH] Error in JWT callback:', error);
-                    return token;
+                    console.error('[JWT Callback] Lỗi khi làm mới token:', error);
                 }
             }
 
+            // Trả về token đã được cập nhật (hoặc token cũ nếu không có trigger 'update')
             return token;
         },
 
+        /**
+         * Callback session chỉ có nhiệm vụ sao chép dữ liệu từ token đã được xử lý
+         * vào đối tượng `session` để client có thể truy cập.
+         */
         async session({ session, token }) {
-            if (session.user) {
-                session.user.id = token.uid;
-                session.user.username = token.username ?? null;
-                session.user.status = token.status ?? "active";
-                session.user.roleId = token.roleId ?? null;
-                session.user.roleName = token.roleName ?? null;
-                session.user.isAdmin = !!token.isAdmin;
-                session.user.perms = Array.isArray(token.perms) ? token.perms : [];
-            }
+            session.user.id = token.uid;
+            session.user.name = token.name;
+            session.user.email = token.email;
+            session.user.roleId = token.roleId;
+            session.user.roleName = token.roleName;
+            session.user.perms = token.perms;
+            session.user.isAdmin = token.isAdmin; // Luôn đảm bảo trường này đúng
+            session.realtimeToken = token.realtimeToken; // Token cho socket
             return session;
         },
+    },
+    pages: {
+        signIn: '/login',
+    },
+    session: {
+        strategy: 'jwt',
     },
 });

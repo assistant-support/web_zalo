@@ -1,43 +1,18 @@
-// my-app/app/actions/auth-actions.js
 'use server';
+import { signIn, signOut } from '@/auth';
 
-import { getServerSession } from '@/lib/authz';
-
-/**
- * Lấy session ở server trả về client (chỉ các trường cần thiết)
- * Bạn có thể dùng ở client qua form action hoặc useActionState.
- */
-export async function getSessionAction() {
-    const session = await getServerSession();
-    if (!session?.user) return { ok: false, user: null };
-    const { user } = session;
-    // Chỉ trả về dữ liệu serializable cần dùng ở UI
-    return {
-        ok: true,
-        user: {
-            id: user.id,
-            email: user.email || null,
-            username: user.username || null,
-            roleId: user.roleId || null,
-            roleName: user.roleName || null,
-            isAdmin: !!user.isAdmin,
-            perms: Array.isArray(user.perms) ? user.perms : []
+export async function login(prevState, formData) {
+    const { email, password } = Object.fromEntries(formData);
+    try {
+        await signIn('credentials', { email, password, redirectTo: '/' });
+    } catch (error) {
+        if (error.type === 'CredentialsSignin') {
+            return { error: 'Email hoặc mật khẩu không hợp lệ.' };
         }
-    };
+        throw error;
+    }
 }
 
-/**
- * (Tùy chọn) Yêu cầu refresh session cho chính mình từ server
- * Sẽ bắn socket 'auth:refresh' tới u:<uid> và client sẽ gọi session.update()
- */
-import { emitSocket } from '@/lib/realtime/emit';
-export async function requestMySessionRefreshAction() {
-    const session = await getServerSession();
-    if (!session?.user?.id) return { ok: false, error: 'Unauthenticated' };
-    await emitSocket({
-        target: { room: `u:${session.user.id}` },
-        event: 'auth:refresh',
-        payload: { reason: 'manual' }
-    });
-    return { ok: true };
+export async function logout() {
+    await signOut({ redirectTo: '/login' });
 }

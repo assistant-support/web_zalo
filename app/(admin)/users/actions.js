@@ -2,126 +2,65 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
-import { auth } from '@/auth';
-import { dbConnect } from '@/lib/db';
-import User from '@/models/account.model';
+import { connectToDB } from '@/lib/db';
+import { triggerSessionUpdate } from '@/lib/realtime/emit';
+import Account from '@/models/account.model';
 import Role from '@/models/role.model';
-import { emitSocket } from '@/lib/realtime/emit';
-import { assertPerm } from '@/lib/authz';
-import bcrypt from 'bcryptjs';
+import { auth } from '@/auth';
 
-const safeStr = v => (v || '').toString().trim();
-
-/**
- * Tạo mới hoặc cập nhật người dùng
- */
-export async function upsertUserAction(prevState, formData) {
-    const session = await auth();
-    assertPerm(session, 'user:create'); // Giả sử quyền create và update dùng chung
-
-    const id = safeStr(formData.get('id'));
-    const name = safeStr(formData.get('name'));
-    const email = safeStr(formData.get('email')).toLowerCase();
-    const password = safeStr(formData.get('password'));
-    const status = safeStr(formData.get('status'));
-
-    if (!name || !email) {
-        return { ok: false, message: 'Tên và Email là bắt buộc.' };
-    }
-    if (!id && !password) {
-        return { ok: false, message: 'Mật khẩu là bắt buộc cho người dùng mới.' };
-    }
-
+// Hàm lấy tất cả người dùng (không cần kiểm tra quyền ở đây)
+export async function getUsers() {
     try {
-        await dbConnect();
-
-        // Kiểm tra email tồn tại
-        const existingUser = await User.findOne({ email: email, _id: { $ne: id } });
-        if (existingUser) {
-            return { ok: false, message: 'Email đã được sử dụng.' };
-        }
-
-        const userData = {
-            name,
-            email,
-            status: status || 'active'
-        };
-
-        if (password) {
-            userData.password = await bcrypt.hash(password, 10);
-        }
-
-        if (id) {
-            // Cập nhật
-            assertPerm(session, 'user:update');
-            await User.findByIdAndUpdate(id, userData);
-        } else {
-            // Tạo mới
-            assertPerm(session, 'user:create');
-            await User.create(userData);
-        }
-
-        revalidatePath('/users');
-        return { ok: true, message: id ? 'Cập nhật thành công!' : 'Tạo mới thành công!' };
-
-    } catch (e) {
-        console.error(e);
-        return { ok: false, message: 'Đã có lỗi xảy ra.' };
+        await connectToDB();
+        const users = await Account.find({}).populate('role').lean();
+        return JSON.parse(JSON.stringify(users));
+    } catch (error) {
+        console.error('[Action Error] Failed to fetch users:', error);
+        return [];
     }
 }
 
-/**
- * Gán vai trò cho người dùng
- */
-export async function setUserRoleAction(formData) {
-    const session = await auth();
-    assertPerm(session, 'user:role:update');
-
-    const userId = safeStr(formData.get('userId'));
-    const roleId = safeStr(formData.get('roleId'));
-
-    if (!userId) return { ok: false, error: 'Missing userId' };
-
-    await dbConnect();
-
-    // Cho phép bỏ role (None)
-    if (!roleId) {
-        await User.findByIdAndUpdate(userId, { role: undefined });
-        await emitSocket({
-            target: { room: `u:${userId}` },
-            event: 'auth:refresh',
-            payload: { reason: 'role-removed' }
-        });
-    } else {
-        const role = await Role.findById(roleId).lean();
-        if (!role) return { ok: false, error: 'Role không tồn tại' };
-
-        await User.findByIdAndUpdate(userId, { role: roleId });
-        await emitSocket({
-            target: { room: `u:${userId}` },
-            event: 'auth:refresh',
-            payload: { reason: 'role-changed', roleId: String(roleId) }
-        });
+// Hàm lấy tất cả các vai trò (không cần kiểm tra quyền ở đây)
+export async function getRoles() {
+    try {
+        await connectToDB();
+        const roles = await Role.find({}).lean();
+        return JSON.parse(JSON.stringify(roles));
+    } catch (error) {
+        console.error('[Action Error] Failed to fetch roles:', error);
+        return [];
     }
-
-    revalidatePath('/users');
-    return { ok: true };
 }
 
-/**
- * Xóa người dùng
- */
-export async function deleteUserAction(userId) {
+// Action để thay đổi vai trò của người dùng
+export async function updateUserRole(userId, newRoleId) {
+    console.log(`[Action] Updating role for user ${userId} to ${newRoleId}`);
     const session = await auth();
-    assertPerm(session, 'user:delete');
+
+    // --- PHẦN CẬP NHẬT LOGIC QUAN TRỌNG ---
+    // Kiểm tra quyền: Cho phép nếu người dùng là admin HOẶC có quyền 'users:role'.
+    const canUpdateRole = session?.user?.isAdmin || session?.user?.perms.includes('users:role');
+
+    if (!canUpdateRole) {
+        console.warn(`[Action Denied] User ${session?.user?.email} does not have permission to update roles.`);
+        return { success: false, message: 'Permission denied.' };
+    }
+    // --- KẾT THÚC PHẦN CẬP NHẬT ---
 
     try {
-        await dbConnect();
-        await User.findByIdAndDelete(userId);
-        revalidatePath('/users');
-        return { ok: true };
-    } catch (e) {
-        console.error(e);
-        return { ok: false, message: 'Không thể xóa người dùng.' };
+        await connectToDB();
+        const userToUpdate = await Account.findByIdAndUpdate(userId, { role: newRoleId }, { new: true });
+        if (!userToUpdate) {
+            return { success: false, message: 'User not found.' };
+        }
+
+        // Kích hoạt cập nhật session real-time cho người dùng bị ảnh hưởng
+        await triggerSessionUpdate(userId, { roleId: newRoleId });
+
+        revalidatePath('/admin/users'); // Làm mới cache của trang users
+        return { success: true, message: 'User role updated successfully!' };
+    } catch (error) {
+        console.error('[Action Error] Failed to update user role:', error);
+        return { success: false, message: 'An error occurred.' };
     }
 }

@@ -1,96 +1,76 @@
 // app/(admin)/users/components/UsersTable.js
 'use client';
-
 import { useState } from 'react';
-import { setUserRoleAction, deleteUserAction } from '../actions';
-import UserDialog from './UserDialog';
+import { updateUserRole } from '../actions';
+import { toast } from 'sonner';
+// import UserDialog from './UserDialog'; // Sẽ dùng khi có chức năng Add/Edit
 
-export default function UsersTable({ users, roles, permissions }) {
-    const [isDialogOpen, setIsDialogOpen] = useState(false);
-    const [currentUser, setCurrentUser] = useState(null);
+export default function UsersTable({ initialUsers, initialRoles, permissions, currentUserId }) {
+    const [users, setUsers] = useState(initialUsers);
 
-    const handleEdit = (user) => {
-        setCurrentUser(user);
-        setIsDialogOpen(true);
-    };
+    const handleRoleChange = async (event, userId) => {
+        const newRoleId = event.target.value;
 
-    const handleAddNew = () => {
-        setCurrentUser(null);
-        setIsDialogOpen(true);
-    };
+        if (userId === currentUserId) {
+            toast.error("Bạn không thể tự thay đổi vai trò của chính mình.");
+            // Phục hồi lại giá trị cũ của dropdown
+            event.target.value = users.find(u => u._id === userId).role._id;
+            return;
+        }
 
-    const handleDelete = async (user) => {
-        if (window.confirm(`Bạn có chắc muốn xóa người dùng "${user.name}" không?`)) {
-            await deleteUserAction(user._id);
+        console.log(`[UI] Attempting to change role for user ${userId} to ${newRoleId}`);
+        toast.loading('Updating user role...');
+        const result = await updateUserRole(userId, newRoleId);
+
+        toast.dismiss(); // Tắt thông báo loading
+        if (result.success) {
+            toast.success(result.message);
+            // Cập nhật lại UI ở client để phản hồi ngay lập tức
+            setUsers(currentUsers => currentUsers.map(u =>
+                u._id === userId ? { ...u, role: initialRoles.find(r => r._id === newRoleId) } : u
+            ));
+        } else {
+            toast.error(result.message);
+            event.target.value = users.find(u => u._id === userId).role._id; // Trả về giá trị cũ nếu thất bại
         }
     };
 
     return (
-        <>
-            <div className="flex justify-end mb-4">
-                {permissions.canCreateUser && (
-                    <button onClick={handleAddNew} className="btn btn-primary">Thêm mới</button>
-                )}
-            </div>
-
-            <UserDialog
-                isOpen={isDialogOpen}
-                onClose={() => setIsDialogOpen(false)}
-                user={currentUser}
-            />
-
-            <section className="rounded-xl border overflow-x-auto">
-                <table className="w-full text-sm">
-                    <thead className="bg-gray-100 dark:bg-gray-800">
-                        <tr>
-                            <th className="p-3 text-left">User</th>
-                            <th className="p-3 text-left">Email</th>
-                            <th className="p-3 text-left">Role</th>
-                            <th className="p-3 text-left">Trạng thái</th>
-                            <th className="p-3 text-left">Hành động</th>
+        <div className="overflow-x-auto">
+            <table className="min-w-full bg-white">
+                <thead className="bg-gray-50">
+                    <tr>
+                        <th className="py-3 px-4 border-b text-left font-semibold text-gray-600">Name</th>
+                        <th className="py-3 px-4 border-b text-left font-semibold text-gray-600">Email</th>
+                        <th className="py-3 px-4 border-b text-left font-semibold text-gray-600">Role</th>
+                        {/* Thêm cột Actions nếu có quyền Edit/Delete */}
+                    </tr>
+                </thead>
+                <tbody className="text-gray-700">
+                    {users.map(user => (
+                        <tr key={user._id} className="hover:bg-gray-50">
+                            <td className="py-3 px-4 border-b">{user.name}</td>
+                            <td className="py-3 px-4 border-b">{user.email}</td>
+                            <td className="py-3 px-4 border-b">
+                                {permissions.canChangeRole ? (
+                                    <select
+                                        defaultValue={user.role?._id || ''}
+                                        onChange={(e) => handleRoleChange(e, user._id)}
+                                        disabled={user._id === currentUserId}
+                                        className="p-2 border rounded-md disabled:bg-gray-200 disabled:cursor-not-allowed"
+                                    >
+                                        {initialRoles.map(role => (
+                                            <option key={role._id} value={role._id}>{role.name}</option>
+                                        ))}
+                                    </select>
+                                ) : (
+                                    user.role?.name || 'N/A'
+                                )}
+                            </td>
                         </tr>
-                    </thead>
-                    <tbody>
-                        {users.map(u => (
-                            <tr key={u._id} className="border-t dark:border-gray-700">
-                                <td className="p-3 font-medium">{u.name}</td>
-                                <td className="p-3">{u.email}</td>
-                                <td className="p-3">
-                                    {permissions.canSetRole ? (
-                                        <form action={setUserRoleAction}>
-                                            <input type="hidden" name="userId" value={String(u._id)} />
-                                            <select
-                                                name="roleId"
-                                                defaultValue={u.role ? String(u.role) : ''}
-                                                className="input w-48"
-                                                onChange={(e) => e.target.form.requestSubmit()}
-                                            >
-                                                <option value="">-- None --</option>
-                                                {roles.map(r => (
-                                                    <option key={r._id} value={r._id}>{r.name}</option>
-                                                ))}
-                                            </select>
-                                        </form>
-                                    ) : (
-                                        roles.find(r => String(r._id) === String(u.role))?.name || <i>None</i>
-                                    )}
-                                </td>
-                                <td className="p-3">
-                                    <span className={u.status === 'active' ? 'text-green-500' : 'text-amber-500'}>
-                                        {u.status}
-                                    </span>
-                                </td>
-                                <td className="p-3">
-                                    <div className="flex gap-2">
-                                        {permissions.canUpdateUser && <button onClick={() => handleEdit(u)} className="btn btn-sm btn-outline">Sửa</button>}
-                                        {permissions.canDeleteUser && <button onClick={() => handleDelete(u)} className="btn btn-sm btn-danger">Xóa</button>}
-                                    </div>
-                                </td>
-                            </tr>
-                        ))}
-                    </tbody>
-                </table>
-            </section>
-        </>
+                    ))}
+                </tbody>
+            </table>
+        </div>
     );
 }
