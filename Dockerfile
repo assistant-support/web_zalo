@@ -26,10 +26,10 @@ COPY --from=builder /app/public ./public
 USER nextjs
 
 # Mở port mà Next.js sẽ chạy BÊN TRONG container
-EXPOSE 3000
+EXPOSE 4011
 
 # Thiết lập port mặc định cho lệnh start
-ENV PORT 3000
+ENV PORT 4011
 
 # Đảm bảo file package.json của bạn có script: "start": "next start"
 # Next.js sẽ tự động nhận biến môi trường PORT
