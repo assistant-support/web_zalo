@@ -33,6 +33,9 @@ yarn-error.log*
 # env files (can opt-in for committing if needed)
 .env*
 
+# Nhưng không chặn (cho phép) file .env.production
+!.env.production
+
 # vercel
 .vercel
 
