@@ -2,6 +2,11 @@
 import { auth } from '@/auth';
 import { NextResponse } from 'next/server';
 
+// ✅ THÊM DÒNG NÀY
+// Buộc middleware chạy trên môi trường Node.js thay vì Edge Runtime.
+// Điều này giải quyết mọi vấn đề tương thích với các thư viện phía server như Mongoose.
+export const runtime = 'nodejs';
+
 export default auth((req) => {
     const { nextUrl } = req;
     const isLoggedIn = !!req.auth;
