@@ -1,18 +1,23 @@
 import "./globals.css";
 import { Providers } from "./providers";
 import { Toaster } from 'sonner';
+import ShellGate from "@/components/shell/wrap";  
+import { auth } from "@/auth";
 
 export const metadata = {
   title: "Zalo App",
   description: "Next.js 15 & Socket.IO",
 };
 
-export default function RootLayout({ children }) {
+export default async function RootLayout({ children }) {
+  const session = await auth();
+
   return (
     <html lang="en">
       <body >
         <Providers>
-          <main>{children}</main>
+          <main>
+            <ShellGate session={session}>{children}</ShellGate></main>
         </Providers>
         <Toaster richColors position="top-right" />
       </body>

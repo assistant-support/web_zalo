@@ -18,20 +18,14 @@ export default function SocketBridge() {
             socketRef.current = socket;
 
             // --- Định nghĩa các hàm xử lý sự kiện ---
-            const onConnect = () => {
-                console.log(`[SocketBridge] Connected to Socket.IO with ID: ${socket.id}`);
-            };
+            const onConnect = () => { };
 
-            const onDisconnect = (reason) => {
-                console.log('[SocketBridge] Disconnected from Socket.IO:', reason);
-            };
+            const onDisconnect = (reason) => {};
 
             const onConnectError = (err) => {
-                console.error(`[SocketBridge] Connection error: ${err.message}`);
             };
 
             const onSessionUpdate = () => {
-                console.log('[SocketBridge] Received "session:update" event. Forcing logout.');
                 socket.disconnect();
                 logout();
             };
@@ -51,13 +45,11 @@ export default function SocketBridge() {
 
             // Chỉ kết nối nếu socket chưa được kết nối
             if (!socket.connected) {
-                console.log('[SocketBridge] Attempting to connect...');
                 socket.connect();
             }
         } else if (status === 'unauthenticated') {
             // Nếu người dùng không còn xác thực, đảm bảo socket được ngắt kết nối
             if (socketRef.current) {
-                console.log('[SocketBridge] User is unauthenticated. Disconnecting and destroying socket.');
                 disconnectAndDestroySocket();
                 socketRef.current = null;
             }
@@ -66,10 +58,6 @@ export default function SocketBridge() {
         // --- Hàm dọn dẹp ---
         // Sẽ chạy khi component unmount
         return () => {
-            console.log('[SocketBridge] Cleanup on component unmount.');
-            // Khi component bị hủy (ví dụ chuyển trang), chúng ta không ngắt kết nối
-            // mà chỉ gỡ bỏ listener để tránh memory leak.
-            // Việc ngắt kết nối toàn bộ chỉ nên xảy ra khi logout (đã xử lý ở trên).
             if (socketRef.current) {
                 socketRef.current.off('connect');
                 socketRef.current.off('disconnect');
