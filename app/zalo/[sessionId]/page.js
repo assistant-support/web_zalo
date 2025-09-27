@@ -5,15 +5,16 @@ import { connectToDB } from '@/lib/db';
 import ZaloSession from '@/models/zaloSession.model';
 import ZaloChatClient from './ZaloChatClient';
 
-// Trang chi tiết chat của 1 tài khoản Zalo (UI giống Zalo cơ bản)
 export default async function ZaloChatPage({ params }) {
-    params = await params
+    // yêu cầu: id lấy từ params phải có await
+    const { sessionId } = await Promise.resolve(params);
+
     const session = await auth();
     if (!session?.user) redirect('/login');
 
-    const sessionId = params.sessionId; // ✅ sửa đúng tham số động
     await connectToDB();
     const zaloSession = await ZaloSession.findById(sessionId);
+
     if (!zaloSession || zaloSession.user.toString() !== session.user.id) {
         return (
             <div className="p-8 text-center text-red-600">
@@ -27,8 +28,12 @@ export default async function ZaloChatPage({ params }) {
         <div className="h-full">
             {/* Truyền thông tin cơ bản cho client (không chứa cookies) */}
             <ZaloChatClient
-                sessionId={sessionId}
-                account={{ name: zaloSession.name || 'Zalo', avatar: zaloSession.avatar || '', status: zaloSession.status }}
+                sessionId={String(sessionId)}
+                account={{
+                    name: zaloSession.name || 'Zalo',
+                    avatar: zaloSession.avatar || '',
+                    status: zaloSession.status || 'offline'
+                }}
             />
         </div>
     );

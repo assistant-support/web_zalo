@@ -20,8 +20,7 @@ export default async function ZaloAccountsPage() {
         .select('name avatar lastLoginAt status') 
         .lean();
     const accountsData = JSON.parse(JSON.stringify(accounts)); 
-    console.log(accountsData);
-    
+
     return (
         <div className="p-2 w-full">
             <div className="bg-white p-2 rounded-md border h-full flex flex-col gap-2" style={{ borderColor: 'var(--border)' }}>

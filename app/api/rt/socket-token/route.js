@@ -26,7 +26,7 @@ export async function GET() {
         return NextResponse.json({ error: 'server_misconfigured: SOCKET_JWT_SECRET missing' }, { status: 500 });
     }
 
-    const ttlSec = Number(process.env.SOCKET_TOKEN_TTL_SEC || 600);
+    const ttlSec = Number(600);
     const nowSec = Math.floor(Date.now() / 1000);
 
     const payload = {

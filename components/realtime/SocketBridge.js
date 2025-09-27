@@ -1,71 +1,32 @@
-// web-next/components/realtime/SocketBridge.js (Phiên bản đã sửa lỗi)
+// components/realtime/SocketBridge.js
+// --- THAY THẾ TOÀN BỘ FILE CỦA BẠN BẰNG FILE NÀY ---
+
 'use client';
-import { useEffect, useRef } from 'react';
+import { useEffect } from 'react';
 import { useSession } from 'next-auth/react';
-import { getSocket, disconnectAndDestroySocket } from '@/lib/realtime/socket-client';
-import { logout } from '@/app/actions/auth-actions';
+import { connectSocket, disconnectSocket } from '@/lib/realtime/socket-client';
 
 export default function SocketBridge() {
-    const { data: session, status } = useSession();
-    // Dùng useRef để đảm bảo socket chỉ được khởi tạo và quản lý một cách nhất quán
-    const socketRef = useRef(null);
+    const { status } = useSession();
 
     useEffect(() => {
-        // Nếu người dùng đã xác thực và có token
-        if (status === 'authenticated' && session?.realtimeToken) {
-            // Lấy instance của socket, hàm getSocket đã được tối ưu để chỉ tạo mới khi cần
-            const socket = getSocket(session.realtimeToken);
-            socketRef.current = socket;
-
-            // --- Định nghĩa các hàm xử lý sự kiện ---
-            const onConnect = () => { };
-
-            const onDisconnect = (reason) => {};
-
-            const onConnectError = (err) => {
-            };
-
-            const onSessionUpdate = () => {
-                socket.disconnect();
-                logout();
-            };
-
-            // --- Gắn listener ---
-            // Gỡ bỏ các listener cũ trước để tránh gắn trùng lặp
-            socket.off('connect', onConnect);
-            socket.off('disconnect', onDisconnect);
-            socket.off('connect_error', onConnectError);
-            socket.off('session:update', onSessionUpdate);
-
-            // Gắn listener mới
-            socket.on('connect', onConnect);
-            socket.on('disconnect', onDisconnect);
-            socket.on('connect_error', onConnectError);
-            socket.on('session:update', onSessionUpdate);
-
-            // Chỉ kết nối nếu socket chưa được kết nối
-            if (!socket.connected) {
-                socket.connect();
-            }
+        if (status === 'authenticated') {
+            // Khi người dùng đăng nhập, khởi tạo kết nối
+            console.log('[SocketBridge] Người dùng đã xác thực, đang khởi tạo kết nối socket...');
+            connectSocket().catch(err => {
+                console.error("[SocketBridge] Không thể khởi tạo kết nối socket:", err);
+            });
         } else if (status === 'unauthenticated') {
-            // Nếu người dùng không còn xác thực, đảm bảo socket được ngắt kết nối
-            if (socketRef.current) {
-                disconnectAndDestroySocket();
-                socketRef.current = null;
-            }
+            // Khi người dùng đăng xuất, ngắt kết nối và dọn dẹp
+            console.log('[SocketBridge] Người dùng chưa xác thực, đang dọn dẹp socket...');
+            disconnectSocket();
         }
 
-        // --- Hàm dọn dẹp ---
-        // Sẽ chạy khi component unmount
+        // Dọn dẹp khi component unmount (ví dụ khi đóng tab)
         return () => {
-            if (socketRef.current) {
-                socketRef.current.off('connect');
-                socketRef.current.off('disconnect');
-                socketRef.current.off('connect_error');
-                socketRef.current.off('session:update');
-            }
+            disconnectSocket();
         };
-    }, [session, status]); // Effect sẽ chạy lại khi session hoặc status thay đổi
+    }, [status]); // Chỉ chạy lại khi trạng thái session thay đổi
 
-    return null;
+    return null; // Component này không render gì ra giao diện
 }
